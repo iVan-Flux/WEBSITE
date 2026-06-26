@@ -1,10 +1,10 @@
-name: Sync Goozapp Streams
+name: Sync Multiple Goozapp Streams
 
 on:
   schedule:
     # প্রতি ১০ মিনিট পর পর স্বয়ংক্রিয়ভাবে স্ক্রিপ্টটি রান হবে
     - cron: '*/10 * * * *'
-  workflow_dispatch: # চাইলে গিটহাব থেকে ম্যানুয়ালি রান করার অপশন
+  workflow_dispatch: # ম্যানুয়ালি রান করার সুবিধা
 
 jobs:
   sync-job:
@@ -26,8 +26,6 @@ jobs:
 
     - name: Run Sync Script
       env:
-        # গিটহাব সিক্রেটস থেকে ক্রেডেনশিয়াল এবং ডাটাবেজ ইউআরএল লোড করা হচ্ছে
         FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
         FIREBASE_DATABASE_URL: ${{ secrets.FIREBASE_DATABASE_URL }}
-        GOOZAPP_API_URL: "https://all-rounder-two.vercel.app/Goozapp"
       run: python sync_script.py
