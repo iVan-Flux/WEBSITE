@@ -7,12 +7,19 @@ import requests
 import firebase_admin
 from firebase_admin import credentials, db
 
-# --- ১. নাম নরমালাইজেশন এবং ক্লিনিং লজিক ---
+# --- ১. এপিআই ইউআরএল তালিকা (আপনার দেওয়া ক্রমানুসারে) ---
+API_URLS = [
+    "https://all-rounder-two.vercel.app/Goozapp",
+    "https://all-rounder-two.vercel.app/streams-center",
+    "https://all-rounder-two.vercel.app/fawna",
+    "https://all-rounder-two.vercel.app/Roxi"
+]
+
+# --- ২. নাম নরমালাইজেশন এবং ক্লিনিং লজিক ---
 def normalize_name(name):
     if not name:
         return ""
     
-    # HTML এন্টিটি ডিকোড করা (যেমন: &amp; থেকে & করা)
     name = html.unescape(name)
     name = name.lower()
     
@@ -40,7 +47,6 @@ def get_teams_from_rivels(rivels):
     if not rivels:
         return None, None
     
-    # HTML ডিকোড করা
     clean_rivels = html.unescape(rivels)
     
     # ' vs ' বা ' vs. ' দিয়ে টিম দুটি আলাদা করা
@@ -49,7 +55,7 @@ def get_teams_from_rivels(rivels):
         return parts[0].strip(), parts[1].strip()
     return None, None
 
-# --- ২. ফায়ারবেস সংযোগ স্থাপন ---
+# --- ৩. ফায়ারবেস সংযোগ স্থাপন ---
 def initialize_firebase():
     service_account_env = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
     database_url = os.environ.get("FIREBASE_DATABASE_URL")
@@ -69,41 +75,39 @@ def initialize_firebase():
         print(f"❌ Firebase Initialization Failed: {str(e)}")
         exit(1)
 
-# --- ৩. মূল সিঙ্ক লজিক ---
+# --- ৪. মূল সিঙ্ক লজিক ---
 def main():
     initialize_firebase()
     
-    api_url = os.environ.get("GOOZAPP_API_URL", "https://all-rounder-two.vercel.app/Goozapp")
+    # ক. সবকটি এপিআই থেকে ডেটা সংগ্রহ এবং একই ম্যাচের লিংকগুলো একত্রিত করা
+    all_api_groups = {}
     
-    # ক. API থেকে ডেটা নিয়ে আসা
-    try:
-        print(f"📡 Fetching data from API: {api_url}")
-        response = requests.get(api_url, timeout=15)
-        response.raise_for_status()
-        api_data = response.json()
-        live_data = api_data.get("Live_Data", [])
-        print(f"📊 Total Matches found in API: {len(live_data)}")
-    except Exception as e:
-        print(f"❌ Failed to fetch API data: {str(e)}")
-        exit(1)
-
-    # খ. API ম্যাচের গ্রুপ তৈরি করা (একই ম্যাচের একাধিক সার্ভার হ্যান্ডেল করতে)
-    gooz_groups = {}
-    for item in live_data:
-        rivels = item.get("Rivels", "")
-        t1, t2 = get_teams_from_rivels(rivels)
-        
-        if t1 and t2:
-            n1 = normalize_name(t1)
-            n2 = normalize_name(t2)
-            # অর্ডার নিরপেক্ষ রাখতে টিমদ্বয়ের নাম সর্ট করে কী (Key) বানানো হলো
-            match_key = tuple(sorted([n1, n2]))
+    for url in API_URLS:
+        try:
+            print(f"📡 Fetching data from API: {url}")
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            api_data = response.json()
+            live_data = api_data.get("Live_Data", [])
+            print(f"   Matches found: {len(live_data)}")
             
-            if match_key not in gooz_groups:
-                gooz_groups[match_key] = []
-            gooz_groups[match_key].append(item)
+            for item in live_data:
+                rivels = item.get("Rivels", "")
+                t1, t2 = get_teams_from_rivels(rivels)
+                
+                if t1 and t2:
+                    n1 = normalize_name(t1)
+                    n2 = normalize_name(t2)
+                    match_key = tuple(sorted([n1, n2]))
+                    
+                    if match_key not in all_api_groups:
+                        all_api_groups[match_key] = []
+                    all_api_groups[match_key].append(item)
+        except Exception as e:
+            # একটি এপিআই ডাউন থাকলেও যাতে অন্যগুলো কাজ করে, তাই ওয়ার্নিং দিয়ে কাজ চলমান রাখা হবে
+            print(f"⚠️ Warning: Failed to fetch API data from {url}: {str(e)}")
 
-    # গ. ডাটাবেজ থেকে ম্যাচ রিড করা
+    # খ. ডাটাবেজ থেকে ম্যাচ রিড করা
     try:
         events_ref = db.reference('sports_live/events')
         db_events = events_ref.get()
@@ -115,8 +119,7 @@ def main():
         print("ℹ️ No events found in Firebase database under 'sports_live/events'.")
         return
 
-    # ঘ. ইভেন্টগুলোর উপর লুপ চালিয়ে মিল খোঁজা
-    # ডাটাবেজ রিটার্ন অবজেক্ট লিস্ট বা ডিকশনারি যেকোনোটি হতে পারে, তা হ্যান্ডেল করা হলো
+    # গ. ইভেন্টগুলোর উপর লুপ চালিয়ে মিল খোঁজা
     if isinstance(db_events, list):
         iterator = enumerate(db_events)
     else:
@@ -137,9 +140,7 @@ def main():
         ndb2 = normalize_name(db_teamB)
 
         matched_streams = None
-        # Goozapp গ্রুপের সাথে ডাটাবেজের টিমের মিল খোঁজা
-        for (g1, g2), streams in gooz_groups.items():
-            # আংশিক মিল এবং রিভার্স ম্যাচিং হ্যান্ডেল করার লজিক
+        for (g1, g2), streams in all_api_groups.items():
             match_1 = (ndb1 in g1 or g1 in ndb1) and (ndb2 in g2 or g2 in ndb2)
             match_2 = (ndb1 in g2 or g2 in ndb1) and (ndb2 in g1 or g1 in ndb2)
 
@@ -147,27 +148,39 @@ def main():
                 matched_streams = streams
                 break
 
-        # ঙ. ম্যাচের সিদ্ধান্ত এবং ডাটাবেজ আপডেট
+        # ঘ. ডাটাবেজ আপডেট করার সিদ্ধান্ত
         if matched_streams:
-            # যদি এপিআই-তে স্ট্রিমিং সার্ভার পাওয়া যায়, তবে আগের লিংক ডিলিট করে নতুন লিংক বসবে
+            # ডুপ্লিকেট লিংক বাদ দেওয়ার জন্য সেট (Set) ব্যবহার করা হলো
+            seen_links = set()
             updated_channels = []
-            for index, stream in enumerate(matched_streams):
-                server_num = index + 1
-                updated_channels.append({
-                    "link": stream.get("Link", ""),
-                    "title": f"SERVER {server_num}",
-                    "tokenApi": ""
-                })
+            server_count = 1
 
-            try:
-                # সুনির্দিষ্ট ম্যাচের channels_data নোডটি নতুন ডেটা দিয়ে ওভাররাইট করা হচ্ছে
-                db.reference(f'sports_live/events/{key}/channels_data').set(updated_channels)
-                print(f"✅ Updated: {db_teamA} vs {db_teamB} -> Added {len(updated_channels)} servers (Previous links replaced).")
-            except Exception as e:
-                print(f"⚠️ Failed to update database for {db_teamA} vs {db_teamB}: {str(e)}")
+            for stream in matched_streams:
+                link = stream.get("Link", "")
+                if not link:
+                    continue
+                
+                # যদি লিংকটি ইতিমধ্যে অন্য কোনো এপিআই থেকে এসে থাকে, তবে তা বাদ দেওয়া হবে
+                if link not in seen_links:
+                    seen_links.add(link)
+                    updated_channels.append({
+                        "link": link,
+                        "title": f"SERVER {server_count}",
+                        "tokenApi": ""
+                    })
+                    server_count += 1
+
+            if updated_channels:
+                try:
+                    db.reference(f'sports_live/events/{key}/channels_data').set(updated_channels)
+                    print(f"✅ Updated: {db_teamA} vs {db_teamB} -> Added {len(updated_channels)} servers sequentially.")
+                except Exception as e:
+                    print(f"⚠️ Failed to update database for {db_teamA} vs {db_teamB}: {str(e)}")
+            else:
+                print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> Matched streams had empty links.")
         else:
-            # যদি এপিআই-তে কোনো স্ট্রিম লিংক না থাকে, তবে পূর্বের ডাটাবেজ ডেটা স্পর্শ করা হবে না
-            print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> No stream found in API (Database kept as is).")
+            # এপিআই-তে কোনো লিংক না পাওয়া গেলে ডাটাবেজ অপরিবর্তিত থাকবে
+            print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> No stream found in any API (Database kept as is).")
 
     print("🏁 Synchronization Completed.")
 
