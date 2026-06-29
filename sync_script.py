@@ -8,15 +8,7 @@ import firebase_admin
 from firebase_admin import credentials, db
 from difflib import SequenceMatcher
 
-# --- ১. এপিআই ইউআরএল তালিকা (আপনার সিকোয়েন্স অনুযায়ী) ---
-API_URLS = [
-    "https://all-rounder-two.vercel.app/Goozapp",
-    "https://all-rounder-two.vercel.app/streams-center",
-    "https://all-rounder-two.vercel.app/fawna",
-    "https://all-rounder-two.vercel.app/Roxi"
-]
-
-# --- ২. কমন স্পোর্টস সংক্ষিপ্ত রূপের ডিকশনারি (Aliases) ---
+# --- ১. কমন স্পোর্টস সংক্ষিপ্ত রূপের ডিকশনারি (Aliases) ---
 COMMON_ALIASES = {
     # দেশসমূহ
     "eng": "england",
@@ -85,7 +77,7 @@ COMMON_ALIASES = {
     "qg": "quetta gladiators"
 }
 
-# --- ৩. অ্যাডভান্সড নাম নরমালাইজেশন ও এক্সপেনশন লজিক ---
+# --- ২. অ্যাডভান্সড নাম নরমালাইজেশন ও এক্সপেনশন লজিক ---
 def normalize_and_expand(name):
     if not name:
         return ""
@@ -118,7 +110,7 @@ def normalize_and_expand(name):
             
     return " ".join(expanded_words)
 
-# --- ৪. হাইব্রিড ম্যাচিং অ্যালগরিদম (Subset, Overlap, Sequence matching) ---
+# --- ৩. হাইব্রিড ম্যাচিং অ্যালগরিদম (Subset, Overlap, Sequence matching) ---
 def is_team_matching(name1, name2):
     n1 = normalize_and_expand(name1)
     n2 = normalize_and_expand(name2)
@@ -164,7 +156,7 @@ def get_teams_from_rivels(rivels):
         return parts[0].strip(), parts[1].strip()
     return None, None
 
-# --- ৫. ফায়ারবেস সংযোগ স্থাপন ---
+# --- ৪. ফায়ারবেস সংযোগ স্থাপন ---
 def initialize_firebase():
     service_account_env = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
     database_url = os.environ.get("FIREBASE_DATABASE_URL")
@@ -184,36 +176,87 @@ def initialize_firebase():
         print(f"❌ Firebase Connection Failed: {str(e)}")
         exit(1)
 
+# --- ৫. ৬টি এপিআই থেকে ভিন্ন স্ট্রাকচারের ডেটা সংগ্রহ ও পার্স করার লজিক ---
+def fetch_and_parse_all_apis():
+    all_streams = []  # সংগৃহীত স্ট্রিম ডাটার তালিকা: {"t1": "...", "t2": "...", "link": "..."}
+
+    # ক. প্রথম ৪টি স্ট্যান্ডার্ড এপিআই (Goozapp, streams-center, fawna, Roxi)
+    standard_apis = [
+        "https://all-rounder-two.vercel.app/Goozapp",
+        "https://all-rounder-two.vercel.app/streams-center",
+        "https://all-rounder-two.vercel.app/fawna",
+        "https://all-rounder-two.vercel.app/Roxi"
+    ]
+    for url in standard_apis:
+        try:
+            print(f"📡 Requesting Standard API: {url}")
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            data = response.json()
+            live_data = data.get("Live_Data", [])
+            for item in live_data:
+                rivels = item.get("Rivels", "")
+                link = item.get("Link", "")
+                t1, t2 = get_teams_from_rivels(rivels)
+                if t1 and t2 and link:
+                    all_streams.append({"t1": t1, "t2": t2, "link": link})
+            print(f"   📊 Loaded {len(live_data)} matches")
+        except Exception as e:
+            print(f"⚠️ Warning: Skip API {url} due to error: {str(e)}")
+
+    # খ. API 5: CR7 API
+    cr7_url = "https://raw.githubusercontent.com/sptvhelpdesk-ship-it/Universal-auto/refs/heads/main/data.json"
+    try:
+        print(f"📡 Requesting CR7 API: {cr7_url}")
+        response = requests.get(cr7_url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        events = data.get("events", [])
+        for event in events:
+            t1 = event.get("home_team_name", "")
+            t2 = event.get("away_team_name", "")
+            servers = event.get("servers", [])
+            if t1 and t2:
+                for server in servers:
+                    link = server.get("url", "")
+                    if link:
+                        all_streams.append({"t1": t1, "t2": t2, "link": link})
+        print(f"   📊 Loaded {len(events)} matches")
+    except Exception as e:
+        print(f"⚠️ Warning: Skip CR7 API due to error: {str(e)}")
+
+    # গ. API 6: BING API
+    bing_url = "https://bing-stream-one.vercel.app/"
+    try:
+        print(f"📡 Requesting BING API: {bing_url}")
+        response = requests.get(bing_url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        channels = data.get("channels", [])
+        for channel in channels:
+            t1 = channel.get("Team 1 Name", "")
+            t2 = channel.get("Team 2 Name", "")
+            stream_urls = channel.get("Stream URL", [])
+            if t1 and t2:
+                for server in stream_urls:
+                    link = server.get("play_url", "")
+                    if link:
+                        all_streams.append({"t1": t1, "t2": t2, "link": link})
+        print(f"   📊 Loaded {len(channels)} matches")
+    except Exception as e:
+        print(f"⚠️ Warning: Skip BING API due to error: {str(e)}")
+
+    return all_streams
+
 # --- ৬. মূল সমন্বয় প্রক্রিয়া ---
 def main():
     initialize_firebase()
     
-    # ক. সবকটি API থেকে ডেটা এনে গ্রুপ করা
-    all_api_groups = []
-    
-    for url in API_URLS:
-        try:
-            print(f"📡 Requesting: {url}")
-            response = requests.get(url, timeout=15)
-            response.raise_for_status()
-            api_data = response.json()
-            live_data = api_data.get("Live_Data", [])
-            print(f"   📊 Fetched {len(live_data)} matches")
-            
-            for item in live_data:
-                rivels = item.get("Rivels", "")
-                t1, t2 = get_teams_from_rivels(rivels)
-                if t1 and t2:
-                    # এপিআই-এর প্রতিটি ম্যাচের টিম দুটি সেভ রাখা হচ্ছে ম্যাচিংয়ের জন্য
-                    all_api_groups.append({
-                        "team1": t1,
-                        "team2": t2,
-                        "stream": item
-                    })
-        except Exception as e:
-            print(f"⚠️ Warning: Skip API {url} due to error: {str(e)}")
+    # ৬টি এপিআই থেকে সব ডেটা একত্রিত করা
+    all_api_streams = fetch_and_parse_all_apis()
+    print(f"📝 Total accumulated streams across all APIs: {len(all_api_streams)}")
 
-    # খ. ডাটাবেজ থেকে ম্যাচ রিড করা
+    # ডাটাবেজ থেকে ম্যাচ রিড করা
     try:
         events_ref = db.reference('sports_live/events')
         db_events = events_ref.get()
@@ -230,7 +273,7 @@ def main():
     else:
         iterator = db_events.items()
 
-    # গ. ম্যাচগুলোর উপর ইন্টেলিজেন্ট কম্পারিজন লুপ
+    # ডাটাবেজের প্রতিটি ম্যাচের সাথে এপিআই-এর মিল খোঁজা
     for key, event in iterator:
         if not event:
             continue
@@ -242,57 +285,48 @@ def main():
         if not db_teamA or not db_teamB:
             continue
 
-        matched_streams = []
+        matched_links = []
+        seen_links = set()
         
-        # এপিআই গ্রুপ থেকে এই ডাটাবেজ ম্যাচের জন্য যোগ্য স্ট্রিমিং লিংক খুঁজে বের করা
-        for item in all_api_groups:
-            api_t1 = item["team1"]
-            api_t2 = item["team2"]
+        for stream_item in all_api_streams:
+            api_t1 = stream_item["t1"]
+            api_t2 = stream_item["t2"]
+            api_link = stream_item["link"]
 
-            # সোজা এবং উল্টো দুইভাবেই ম্যাচ চেক করা হচ্ছে (যেমন: A vs B অথবা B vs A)
+            # সোজা এবং উল্টো দুইভাবেই ম্যাচ চেক করা হচ্ছে (A vs B অথবা B vs A)
             match_direct = is_team_matching(db_teamA, api_t1) and is_team_matching(db_teamB, api_t2)
             match_reverse = is_team_matching(db_teamA, api_t2) and is_team_matching(db_teamB, api_t1)
 
             if match_direct or match_reverse:
-                matched_streams.append(item["stream"])
-
-        # ঘ. ডাটাবেজ রাইট করার সিদ্ধান্ত
-        if matched_streams:
-            # লিংকগুলোর ডুপ্লিকেট দূর করা (URL বেসড ডুপ্লিকেশন প্রোটেকশন)
-            seen_links = set()
-            updated_channels = []
-            server_count = 1
-
-            for stream in matched_streams:
-                link = stream.get("Link", "")
-                if not link:
-                    continue
-                
-                clean_link = link.strip().lower()
+                clean_link = api_link.strip().lower()
                 if clean_link.endswith("/"):
                     clean_link = clean_link[:-1]
 
+                # ডুপ্লিকেট লিংক ফিল্টার করা হচ্ছে
                 if clean_link not in seen_links:
                     seen_links.add(clean_link)
-                    updated_channels.append({
-                        "link": link,
-                        "title": f"SERVER {server_count}",
-                        "tokenApi": ""
-                    })
-                    server_count += 1
+                    matched_links.append(api_link)
 
-            if updated_channels:
-                try:
-                    db.ref = db.reference(f'sports_live/events/{key}/channels_data')
-                    db.ref.set(updated_channels)
-                    print(f"✅ Matched & Updated: {db_teamA} vs {db_teamB} -> Found {len(updated_channels)} Server(s).")
-                except Exception as e:
-                    print(f"⚠️ Failed to write to Firebase for {db_teamA} vs {db_teamB}: {str(e)}")
-            else:
-                print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> Matched streams had null links.")
+        # ডাটাবেজ আপডেট করার সিদ্ধান্ত
+        if matched_links:
+            updated_channels = []
+            for i, link in enumerate(matched_links):
+                server_num = i + 1
+                updated_channels.append({
+                    "link": link,
+                    "title": f"SERVER {server_num}",
+                    "tokenApi": ""
+                })
+
+            try:
+                db.ref = db.reference(f'sports_live/events/{key}/channels_data')
+                db.ref.set(updated_channels)
+                print(f"✅ Matched & Updated: {db_teamA} vs {db_teamB} -> Found {len(updated_channels)} Server(s) across all active APIs.")
+            except Exception as e:
+                print(f"⚠️ Failed to write to Firebase for {db_teamA} vs {db_teamB}: {str(e)}")
         else:
             # এপিআইতে না পাওয়া গেলে ডাটাবেজের আগের লিংকগুলোতে হাত দেওয়া হবে না
-            print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> Not found in APIs (Database kept as is).")
+            print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> No stream found in any of the 6 APIs (Database kept as is).")
 
     print("🏁 Sync Workflow Executed Successfully.")
 
