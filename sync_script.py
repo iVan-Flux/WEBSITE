@@ -8,7 +8,7 @@ import firebase_admin
 from firebase_admin import credentials, db
 from difflib import SequenceMatcher
 
-# --- ১. এপিআই ইউআরএল তালিকা (আপনার সিকোয়েন্স অনুযায়ী) ---
+# --- ১. স্ট্যান্ডার্ড এপিআই ইউআরএল তালিকা (সিকোয়েন্স অনুযায়ী) ---
 API_URLS = [
     "https://all-rounder-two.vercel.app/Goozapp",
     "https://all-rounder-two.vercel.app/streams-center",
@@ -184,15 +184,20 @@ def initialize_firebase():
         print(f"❌ Firebase Connection Failed: {str(e)}")
         exit(1)
 
-# --- ৬. ৬টি এপিআই থেকে ডেটা সংগ্রহ এবং কন্ডিশনাল লজিক পার্সিং ---
+# --- ৬. সম্পূর্ণ ৮টি এপিআই থেকে ডেটা সংগ্রহ ও নির্দিষ্ট শর্তাবলী পার্সিং লজিক ---
 def fetch_and_parse_all_apis():
     all_streams = []  # সংগৃহীত স্ট্রিম ডাটার তালিকা: {"t1": "...", "t2": "...", "url": "...", "api": "...", "type": "..."}
 
-    # ক. প্রথম ৪টি স্ট্যান্ডার্ড এপিআই (Goozapp, streams-center, fawna, Roxi)
-    # এই লিংকগুলো সম্পূর্ণ Direct m3u8 স্ট্রিম
-    for url in API_URLS:
+    # ক. ১ম থেকে ৪র্থ এপিআই (Goozapp, streams-center, fawna, Roxi)
+    standard_apis = [
+        ("Goozapp", API_URLS[0]),
+        ("streams-center", API_URLS[1]),
+        ("fawna", API_URLS[2]),
+        ("Roxi", API_URLS[3])
+    ]
+    for name, url in standard_apis:
         try:
-            print(f"📡 Requesting Standard API: {url}")
+            print(f"📡 Requesting Standard API: {name} ({url})")
             response = requests.get(url, timeout=15)
             response.raise_for_status()
             data = response.json()
@@ -211,9 +216,9 @@ def fetch_and_parse_all_apis():
                     })
             print(f"   📊 Loaded {len(live_data)} matches")
         except Exception as e:
-            print(f"⚠️ Warning: Skip API {url} due to error: {str(e)}")
+            print(f"⚠️ Warning: Skip API {name} due to error: {str(e)}")
 
-    # খ. API 5: CR7 API (Direct m3u8 এবং drm mpd উভয় লজিকসহ)
+    # খ. ৫ম এপিআই: CR7 API (Direct m3u8 এবং drm mpd লজিক)
     cr7_url = "https://raw.githubusercontent.com/sptvhelpdesk-ship-it/Universal-auto/refs/heads/main/data.json"
     try:
         print(f"📡 Requesting CR7 API: {cr7_url}")
@@ -232,17 +237,15 @@ def fetch_and_parse_all_apis():
                     s_key = server.get("key", "")
                     
                     if link:
-                        # যদি লিংকটি mpd হয় অথবা টাইপ 'drm' হয়
                         if ".mpd" in link.lower() or s_type == "drm":
                             all_streams.append({
                                 "t1": t1,
                                 "t2": t2,
                                 "url": link,
-                                "api": s_key, # এপিআই কীটি লোড করা হলো
+                                "api": s_key,
                                 "type": "drm"
                             })
                         else:
-                            # সাধারণ m3u8 হলে
                             all_streams.append({
                                 "t1": t1,
                                 "t2": t2,
@@ -254,7 +257,7 @@ def fetch_and_parse_all_apis():
     except Exception as e:
         print(f"⚠️ Warning: Skip CR7 API due to error: {str(e)}")
 
-    # গ. API 6: BING API (সম্পূর্ণ m3u8 Direct স্ট্রিম)
+    # গ. ৬ষ্ঠ এপিআই: BING API (Direct m3u8 স্ট্রিম)
     bing_url = "https://bing-stream-one.vercel.app/"
     try:
         print(f"📡 Requesting BING API: {bing_url}")
@@ -281,15 +284,85 @@ def fetch_and_parse_all_apis():
     except Exception as e:
         print(f"⚠️ Warning: Skip BING API due to error: {str(e)}")
 
+    # ঘ. ৭ম এপিআই: FLUXY API (ফিফা ওয়ার্ল্ড কাপ লিগ ব্লক এবং শুধুমাত্র DRM লিংক ফিল্টারসহ) [1]
+    fluxy_url = "https://ivan-flu-x-o-w-json.vercel.app/"
+    try:
+        print(f"📡 Requesting FLUXY API: {fluxy_url}")
+        response = requests.get(fluxy_url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        events = data.get("events", [])
+        fluxy_added_count = 0
+        
+        for event in events:
+            # ১. লিগ বা টুর্নামেন্ট ব্লক চেক (FIFA World Cup ব্লক ফিল্টার) [1]
+            title = event.get("title", "")
+            event_info = event.get("eventInfo", {})
+            event_name = event_info.get("eventName", "")
+            
+            is_fifa_blocked = "fifa world cup" in title.lower() or "fifa world cup" in event_name.lower()
+            if is_fifa_blocked:
+                # ম্যাচটি ফিফা ওয়ার্ল্ড কাপের হলে এই এপিআই-এর কোনো ডেটাই নেওয়া হবে না [1]
+                continue
+                
+            t1 = event_info.get("teamA", "")
+            t2 = event_info.get("teamB", "")
+            channels_data = event.get("channels_data", [])
+            
+            if t1 and t2:
+                for ch in channels_data:
+                    link = ch.get("link", "")
+                    api_key = ch.get("api", "")
+                    
+                    # ২. শুধুমাত্র DRM লিংক ফিল্টার (অন্য ডাইরেক্ট/m3u8 লিংক স্কিপ করা হবে) [1]
+                    is_drm_link = ".mpd" in link.lower() or bool(api_key)
+                    if is_drm_link and link:
+                        all_streams.append({
+                            "t1": t1,
+                            "t2": t2,
+                            "url": link,
+                            "api": api_key,
+                            "type": "drm"
+                        })
+                        fluxy_added_count += 1
+                        
+        print(f"   📊 Loaded {fluxy_added_count} DRM streams from FLUXY (FIFA matches excluded)")
+    except Exception as e:
+        print(f"⚠️ Warning: Skip FLUXY API due to error: {str(e)}")
+
+    # ঙ. ৮ম এপিআই: MAIN STREAM API (Direct m3u8 স্ট্রিম)
+    main_stream_url = "https://all-rounder-two.vercel.app/Stream-Live"
+    try:
+        print(f"📡 Requesting MAIN STREAM API: {main_stream_url}")
+        response = requests.get(main_stream_url, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        live_data = data.get("Live_Data", [])
+        for item in live_data:
+            rivels = item.get("Rivels", "")
+            link = item.get("Link", "")
+            t1, t2 = get_teams_from_rivels(rivels)
+            if t1 and t2 and link:
+                all_streams.append({
+                    "t1": t1,
+                    "t2": t2,
+                    "url": link,
+                    "api": "",
+                    "type": "Direct"
+                })
+        print(f"   📊 Loaded {len(live_data)} matches")
+    except Exception as e:
+        print(f"⚠️ Warning: Skip MAIN STREAM API due to error: {str(e)}")
+
     return all_streams
 
-# --- ৭. মূল সমন্বয় প্রক্রিয়া ---
+# --- ৮. মূল সমন্বয় প্রক্রিয়া ---
 def main():
     initialize_firebase()
     
-    # সব এপিআই থেকে ডেটা সংগ্রহ এবং কন্ডিশনাল পার্সিং
+    # সব এপিআই থেকে ডেটা সংগ্রহ এবং পার্সিং
     all_api_streams = fetch_and_parse_all_apis()
-    print(f"📝 Total accumulated streams across all APIs: {len(all_api_streams)}")
+    print(f"📝 Total accumulated streams across all 8 APIs: {len(all_api_streams)}")
 
     # ডাটাবেজ থেকে ম্যাচ রিড করা
     try:
@@ -308,7 +381,7 @@ def main():
     else:
         iterator = db_events.items()
 
-    # ডাটাবেজের প্রতিটি ম্যাচের সাথে সংগৃহীত এপিআই ডেটা ম্যাচিং
+    # ডাটাবেজের প্রতিটি ম্যাচের সাথে এপিআই ডেটা ম্যাচিং
     for key, event in iterator:
         if not event:
             continue
@@ -350,7 +423,7 @@ def main():
                 updated_channels.append({
                     "title": f"SERVER {server_num}",
                     "url": stream["url"],
-                    "api": stream["api"], # DRM কী থাকলে বসবে, নাহলে খালি থাকবে
+                    "api": stream["api"], # DRM কী বা খালি স্ট্রিং বসবে
                     "type": stream["type"] # 'Direct' অথবা 'drm'
                 })
 
@@ -362,7 +435,7 @@ def main():
                 print(f"⚠️ Failed to write to Firebase for {db_teamA} vs {db_teamB}: {str(e)}")
         else:
             # এপিআইতে না পাওয়া গেলে ডাটাবেজের আগের লিংকগুলোতে হাত দেওয়া হবে না
-            print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> No stream found in any of the 6 APIs (Database kept as is).")
+            print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> No stream found in any of the 8 APIs (Database kept as is).")
 
     print("🏁 Final Sync Workflow Executed Successfully.")
 
