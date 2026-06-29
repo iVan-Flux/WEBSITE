@@ -8,7 +8,15 @@ import firebase_admin
 from firebase_admin import credentials, db
 from difflib import SequenceMatcher
 
-# --- ১. কমন স্পোর্টস সংক্ষিপ্ত রূপের ডিকশনারি (Aliases) ---
+# --- ১. এপিআই ইউআরএল তালিকা (আপনার সিকোয়েন্স অনুযায়ী) ---
+API_URLS = [
+    "https://all-rounder-two.vercel.app/Goozapp",
+    "https://all-rounder-two.vercel.app/streams-center",
+    "https://all-rounder-two.vercel.app/fawna",
+    "https://all-rounder-two.vercel.app/Roxi"
+]
+
+# --- ২. কমন স্পোর্টস সংক্ষিপ্ত রূপের ডিকশনারি (Aliases) ---
 COMMON_ALIASES = {
     # দেশসমূহ
     "eng": "england",
@@ -77,7 +85,7 @@ COMMON_ALIASES = {
     "qg": "quetta gladiators"
 }
 
-# --- ২. অ্যাডভান্সড নাম নরমালাইজেশন ও এক্সপেনশন লজিক ---
+# --- ৩. অ্যাডভান্সড নাম নরমালাইজেশন ও এক্সপেনশন লজিক ---
 def normalize_and_expand(name):
     if not name:
         return ""
@@ -110,7 +118,7 @@ def normalize_and_expand(name):
             
     return " ".join(expanded_words)
 
-# --- ৩. হাইব্রিড ম্যাচিং অ্যালগরিদম (Subset, Overlap, Sequence matching) ---
+# --- ৪. হাইব্রিড ম্যাচিং অ্যালগরিদম (Subset, Overlap, Sequence matching) ---
 def is_team_matching(name1, name2):
     n1 = normalize_and_expand(name1)
     n2 = normalize_and_expand(name2)
@@ -156,7 +164,7 @@ def get_teams_from_rivels(rivels):
         return parts[0].strip(), parts[1].strip()
     return None, None
 
-# --- ৪. ফায়ারবেস সংযোগ স্থাপন ---
+# --- ৫. ফায়ারবেস সংযোগ স্থাপন ---
 def initialize_firebase():
     service_account_env = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
     database_url = os.environ.get("FIREBASE_DATABASE_URL")
@@ -176,18 +184,13 @@ def initialize_firebase():
         print(f"❌ Firebase Connection Failed: {str(e)}")
         exit(1)
 
-# --- ৫. ৬টি এপিআই থেকে ভিন্ন স্ট্রাকচারের ডেটা সংগ্রহ ও পার্স করার লজিক ---
+# --- ৬. ৬টি এপিআই থেকে ডেটা সংগ্রহ এবং কন্ডিশনাল লজিক পার্সিং ---
 def fetch_and_parse_all_apis():
-    all_streams = []  # সংগৃহীত স্ট্রিম ডাটার তালিকা: {"t1": "...", "t2": "...", "link": "..."}
+    all_streams = []  # সংগৃহীত স্ট্রিম ডাটার তালিকা: {"t1": "...", "t2": "...", "url": "...", "api": "...", "type": "..."}
 
     # ক. প্রথম ৪টি স্ট্যান্ডার্ড এপিআই (Goozapp, streams-center, fawna, Roxi)
-    standard_apis = [
-        "https://all-rounder-two.vercel.app/Goozapp",
-        "https://all-rounder-two.vercel.app/streams-center",
-        "https://all-rounder-two.vercel.app/fawna",
-        "https://all-rounder-two.vercel.app/Roxi"
-    ]
-    for url in standard_apis:
+    # এই লিংকগুলো সম্পূর্ণ Direct m3u8 স্ট্রিম
+    for url in API_URLS:
         try:
             print(f"📡 Requesting Standard API: {url}")
             response = requests.get(url, timeout=15)
@@ -199,12 +202,18 @@ def fetch_and_parse_all_apis():
                 link = item.get("Link", "")
                 t1, t2 = get_teams_from_rivels(rivels)
                 if t1 and t2 and link:
-                    all_streams.append({"t1": t1, "t2": t2, "link": link})
+                    all_streams.append({
+                        "t1": t1, 
+                        "t2": t2, 
+                        "url": link,
+                        "api": "",
+                        "type": "Direct"
+                    })
             print(f"   📊 Loaded {len(live_data)} matches")
         except Exception as e:
             print(f"⚠️ Warning: Skip API {url} due to error: {str(e)}")
 
-    # খ. API 5: CR7 API
+    # খ. API 5: CR7 API (Direct m3u8 এবং drm mpd উভয় লজিকসহ)
     cr7_url = "https://raw.githubusercontent.com/sptvhelpdesk-ship-it/Universal-auto/refs/heads/main/data.json"
     try:
         print(f"📡 Requesting CR7 API: {cr7_url}")
@@ -219,13 +228,33 @@ def fetch_and_parse_all_apis():
             if t1 and t2:
                 for server in servers:
                     link = server.get("url", "")
+                    s_type = server.get("type", "").lower()
+                    s_key = server.get("key", "")
+                    
                     if link:
-                        all_streams.append({"t1": t1, "t2": t2, "link": link})
+                        # যদি লিংকটি mpd হয় অথবা টাইপ 'drm' হয়
+                        if ".mpd" in link.lower() or s_type == "drm":
+                            all_streams.append({
+                                "t1": t1,
+                                "t2": t2,
+                                "url": link,
+                                "api": s_key, # এপিআই কীটি লোড করা হলো
+                                "type": "drm"
+                            })
+                        else:
+                            # সাধারণ m3u8 হলে
+                            all_streams.append({
+                                "t1": t1,
+                                "t2": t2,
+                                "url": link,
+                                "api": "",
+                                "type": "Direct"
+                            })
         print(f"   📊 Loaded {len(events)} matches")
     except Exception as e:
         print(f"⚠️ Warning: Skip CR7 API due to error: {str(e)}")
 
-    # গ. API 6: BING API
+    # গ. API 6: BING API (সম্পূর্ণ m3u8 Direct স্ট্রিম)
     bing_url = "https://bing-stream-one.vercel.app/"
     try:
         print(f"📡 Requesting BING API: {bing_url}")
@@ -241,18 +270,24 @@ def fetch_and_parse_all_apis():
                 for server in stream_urls:
                     link = server.get("play_url", "")
                     if link:
-                        all_streams.append({"t1": t1, "t2": t2, "link": link})
+                        all_streams.append({
+                            "t1": t1,
+                            "t2": t2,
+                            "url": link,
+                            "api": "",
+                            "type": "Direct"
+                        })
         print(f"   📊 Loaded {len(channels)} matches")
     except Exception as e:
         print(f"⚠️ Warning: Skip BING API due to error: {str(e)}")
 
     return all_streams
 
-# --- ৬. মূল সমন্বয় প্রক্রিয়া ---
+# --- ৭. মূল সমন্বয় প্রক্রিয়া ---
 def main():
     initialize_firebase()
     
-    # ৬টি এপিআই থেকে সব ডেটা একত্রিত করা
+    # সব এপিআই থেকে ডেটা সংগ্রহ এবং কন্ডিশনাল পার্সিং
     all_api_streams = fetch_and_parse_all_apis()
     print(f"📝 Total accumulated streams across all APIs: {len(all_api_streams)}")
 
@@ -273,7 +308,7 @@ def main():
     else:
         iterator = db_events.items()
 
-    # ডাটাবেজের প্রতিটি ম্যাচের সাথে এপিআই-এর মিল খোঁজা
+    # ডাটাবেজের প্রতিটি ম্যাচের সাথে সংগৃহীত এপিআই ডেটা ম্যাচিং
     for key, event in iterator:
         if not event:
             continue
@@ -285,50 +320,51 @@ def main():
         if not db_teamA or not db_teamB:
             continue
 
-        matched_links = []
-        seen_links = set()
+        matched_streams = []
+        seen_urls = set()
         
         for stream_item in all_api_streams:
             api_t1 = stream_item["t1"]
             api_t2 = stream_item["t2"]
-            api_link = stream_item["link"]
+            api_url = stream_item["url"]
 
-            # সোজা এবং উল্টো দুইভাবেই ম্যাচ চেক করা হচ্ছে (A vs B অথবা B vs A)
+            # সোজা এবং উল্টো দুইভাবেই ম্যাচ চেক করা হচ্ছে
             match_direct = is_team_matching(db_teamA, api_t1) and is_team_matching(db_teamB, api_t2)
             match_reverse = is_team_matching(db_teamA, api_t2) and is_team_matching(db_teamB, api_t1)
 
             if match_direct or match_reverse:
-                clean_link = api_link.strip().lower()
-                if clean_link.endswith("/"):
-                    clean_link = clean_link[:-1]
+                clean_url = api_url.strip().lower()
+                if clean_url.endswith("/"):
+                    clean_url = clean_url[:-1]
 
-                # ডুপ্লিকেট লিংক ফিল্টার করা হচ্ছে
-                if clean_link not in seen_links:
-                    seen_links.add(clean_link)
-                    matched_links.append(api_link)
+                # ডুপ্লিকেট লিংক ফিল্টার (URL বেসড ডুপ্লিকেশন প্রোটেকশন)
+                if clean_url not in seen_urls:
+                    seen_urls.add(clean_url)
+                    matched_streams.append(stream_item)
 
         # ডাটাবেজ আপডেট করার সিদ্ধান্ত
-        if matched_links:
+        if matched_streams:
             updated_channels = []
-            for i, link in enumerate(matched_links):
+            for i, stream in enumerate(matched_streams):
                 server_num = i + 1
                 updated_channels.append({
-                    "link": link,
                     "title": f"SERVER {server_num}",
-                    "tokenApi": ""
+                    "url": stream["url"],
+                    "api": stream["api"], # DRM কী থাকলে বসবে, নাহলে খালি থাকবে
+                    "type": stream["type"] # 'Direct' অথবা 'drm'
                 })
 
             try:
                 db.ref = db.reference(f'sports_live/events/{key}/channels_data')
                 db.ref.set(updated_channels)
-                print(f"✅ Matched & Updated: {db_teamA} vs {db_teamB} -> Found {len(updated_channels)} Server(s) across all active APIs.")
+                print(f"✅ Matched & Updated: {db_teamA} vs {db_teamB} -> Found {len(updated_channels)} Server(s) with correct 4-field structure.")
             except Exception as e:
                 print(f"⚠️ Failed to write to Firebase for {db_teamA} vs {db_teamB}: {str(e)}")
         else:
             # এপিআইতে না পাওয়া গেলে ডাটাবেজের আগের লিংকগুলোতে হাত দেওয়া হবে না
             print(f"ℹ️ Skipped: {db_teamA} vs {db_teamB} -> No stream found in any of the 6 APIs (Database kept as is).")
 
-    print("🏁 Sync Workflow Executed Successfully.")
+    print("🏁 Final Sync Workflow Executed Successfully.")
 
 if __name__ == "__main__":
     main()
