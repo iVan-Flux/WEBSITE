@@ -148,6 +148,9 @@ def initialize_firebase():
 
 def fetch_and_parse_all_apis():
     all_streams = []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
     standard_apis = [
         ("Goozapp", os.environ.get("API_URL_GOOZAPP")),
@@ -159,7 +162,7 @@ def fetch_and_parse_all_apis():
         if not url:
             continue
         try:
-            response = requests.get(url, timeout=15)
+            response = requests.get(url, headers=headers, timeout=15)
             response.raise_for_status()
             data = response.json()
             live_data = data.get("Live_Data", [])
@@ -182,7 +185,7 @@ def fetch_and_parse_all_apis():
     cr7_url = os.environ.get("API_URL_CR7")
     if cr7_url:
         try:
-            response = requests.get(cr7_url, timeout=15)
+            response = requests.get(cr7_url, headers=headers, timeout=15)
             response.raise_for_status()
             data = response.json()
             events = data.get("events", [])
@@ -221,7 +224,7 @@ def fetch_and_parse_all_apis():
     bing_url = os.environ.get("API_URL_BING")
     if bing_url:
         try:
-            response = requests.get(bing_url, timeout=15)
+            response = requests.get(bing_url, headers=headers, timeout=15)
             response.raise_for_status()
             data = response.json()
             channels = data.get("channels", [])
@@ -247,7 +250,7 @@ def fetch_and_parse_all_apis():
     fluxy_url = os.environ.get("API_URL_FLUXY")
     if fluxy_url:
         try:
-            response = requests.get(fluxy_url, timeout=15)
+            response = requests.get(fluxy_url, headers=headers, timeout=15)
             response.raise_for_status()
             data = response.json()
             events = data.get("events", [])
@@ -276,13 +279,13 @@ def fetch_and_parse_all_apis():
                                 "api": api_key,
                                 "type": "drm"
                             })
-        except Exception:
-            pass
+            except Exception:
+                pass
 
     main_stream_url = os.environ.get("API_URL_MAIN_STREAM")
     if main_stream_url:
         try:
-            response = requests.get(main_stream_url, timeout=15)
+            response = requests.get(main_stream_url, headers=headers, timeout=15)
             response.raise_for_status()
             data = response.json()
             live_data = data.get("Live_Data", [])
@@ -326,6 +329,8 @@ def main():
         db_teamB = event_info.get("teamB", "")
         if not db_teamA or not db_teamB:
             continue
+        cat_lower = str(event.get("cat", "")).lower()
+        is_cricket = "cricket" in cat_lower
         matched_by_api = {api: [] for api in ["CR7", "fawna", "Goozapp", "MAIN_STREAM", "streams_center", "FLUXY", "BING", "Roxi"]}
         seen_urls = set()
         has_match = False
@@ -334,6 +339,8 @@ def main():
             api_t2 = stream_item["t2"]
             api_url = stream_item["url"]
             api_name = stream_item["api_name"]
+            if is_cricket and api_name == "CR7":
+                continue
             match_direct = is_team_matching(db_teamA, api_t1) and is_team_matching(db_teamB, api_t2)
             match_reverse = is_team_matching(db_teamA, api_t2) and is_team_matching(db_teamB, api_t1)
             if match_direct or match_reverse:
@@ -374,7 +381,6 @@ def main():
             for api_name in api_priority_order:
                 leftovers.extend(matched_by_api[api_name])
             final_ordered_list = ordered_list + leftovers
-            cat_lower = str(event.get("cat", "")).lower()
             is_group_a = any(term in cat_lower for term in ["football", "mlb", "nba", "wnba", "basketball", "baseball"])
             if not is_group_a:
                 drm_streams = [s for s in final_ordered_list if s["type"] == "drm"]
