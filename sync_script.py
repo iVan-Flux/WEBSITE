@@ -279,8 +279,8 @@ def fetch_and_parse_all_apis():
                                 "api": api_key,
                                 "type": "drm"
                             })
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     main_stream_url = os.environ.get("API_URL_MAIN_STREAM")
     if main_stream_url:
@@ -306,6 +306,13 @@ def fetch_and_parse_all_apis():
             pass
 
     return all_streams
+
+def extract_from_api(matched_by_api, api_key, count):
+    extracted = []
+    for _ in range(count):
+        if matched_by_api[api_key]:
+            extracted.append(matched_by_api[api_key].pop(0))
+    return extracted
 
 def main():
     initialize_firebase()
@@ -353,20 +360,14 @@ def main():
                         matched_by_api[api_name].append(stream_item)
                         has_match = True
         if has_match:
-            def extract_from_api(api_key, count):
-                extracted = []
-                for _ in range(count):
-                    if matched_by_api[api_key]:
-                        extracted.append(matched_by_api[api_key].pop(0))
-                return extracted
-            cr7_top = extract_from_api("CR7", 2)
-            fawna_top = extract_from_api("fawna", 1)
-            goozapp_top = extract_from_api("Goozapp", 1)
-            main_stream_top = extract_from_api("MAIN_STREAM", 1)
-            streams_center_top = extract_from_api("streams_center", 1)
-            fluxy_top = extract_from_api("FLUXY", 1)
-            bing_top = extract_from_api("BING", 1)
-            roxi_top = extract_from_api("Roxi", 1)
+            cr7_top = extract_from_api(matched_by_api, "CR7", 2)
+            fawna_top = extract_from_api(matched_by_api, "fawna", 1)
+            goozapp_top = extract_from_api(matched_by_api, "Goozapp", 1)
+            main_stream_top = extract_from_api(matched_by_api, "MAIN_STREAM", 1)
+            streams_center_top = extract_from_api(matched_by_api, "streams_center", 1)
+            fluxy_top = extract_from_api(matched_by_api, "FLUXY", 1)
+            bing_top = extract_from_api(matched_by_api, "BING", 1)
+            roxi_top = extract_from_api(matched_by_api, "Roxi", 1)
             ordered_list = []
             ordered_list.extend(cr7_top)
             ordered_list.extend(fawna_top)
